@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3001;
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 const RANK_VALUES = { A:15, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8, 9:9, 10:10, J:10, Q:10, K:10 };
-const DISCARD_CLAIM_SECONDS = 12;
+const DISCARD_CLAIM_SECONDS = 8;
 
 function buildDoubleDeck() {
   const deck = []; let id = 0;
@@ -134,27 +134,6 @@ function isValidMeld(cards, isBaterRound) {
   }
   return false;
 }
-
-function sortMeldCards(cards, type) {
-  if (type !== "run") return cards;
-  const nonWild = cards.filter(c => !c.isWild).sort((a, b) => getRankIndex(a.rank) - getRankIndex(b.rank));
-  const wilds = cards.filter(c => c.isWild);
-  if (nonWild.length === 0) return cards;
-  const idxMap = runIndices(nonWild);
-  const pairs = nonWild.map((c, i) => ({ card: c, idx: idxMap[i] })).sort((a, b) => a.idx - b.idx);
-  const minIdx = pairs[0].idx;
-  const maxIdx = pairs[pairs.length - 1].idx;
-  const sorted = [];
-  let wi = 0;
-  for (let i = minIdx; i <= maxIdx; i++) {
-    const p = pairs.find(p => p.idx === i);
-    if (p) sorted.push(p.card);
-    else if (wi < wilds.length) sorted.push(wilds[wi++]);
-  }
-  while (wi < wilds.length) sorted.push(wilds[wi++]);
-  return sorted;
-}
-
 
 function initRound(playerNames, dealerIdx, scores, wins, round) {
   let deck = shuffle(buildDoubleDeck());
@@ -460,7 +439,7 @@ io.on("connection", (socket) => {
     }
 
     player.hand = player.hand.filter(c => !cardIds.includes(c.id));
-    player.melds.push({ cards: sortMeldCards(selCards, type), type, owner: socket.playerIdx, order: Date.now() });
+    player.melds.push({ cards: selCards, type, owner: socket.playerIdx, order: Date.now() });
     g.meldsThisTurn++;
     g.lastAction = { type: "newMeld", player: player.name, cardIds: new Set(cardIds), meldOrder: player.melds[player.melds.length-1].order, ts: Date.now() };
 
@@ -497,7 +476,7 @@ io.on("connection", (socket) => {
     if (!type) { socket.emit("error", "Jogo inválido!"); return; }
 
     player.hand = player.hand.filter(c => !cardIds.includes(c.id));
-    g.players[targetPlayerIdx].melds[targetMeldIdx].cards = sortMeldCards(combined, type);
+    g.players[targetPlayerIdx].melds[targetMeldIdx].cards = combined;
     g.lastAction = { type: "addToMeld", player: player.name, cardIds: new Set(cardIds), meldOrder: targetMeld.order, ts: Date.now() };
 
     const won = player.hand.length === 0;
