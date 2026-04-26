@@ -598,6 +598,33 @@ io.on("connection", (socket) => {
     broadcastChat(socket.roomCode, room.chat);
   });
 
+
+  // ── Rejoin room after reconnect ──
+  socket.on("rejoinRoom", ({ code, name, playerIdx }) => {
+    const room = rooms[code];
+    if (!room) return;
+    
+    // Update socket ID for this player
+    const player = room.players.find(p => p.playerIdx === playerIdx && p.name === name);
+    if (player) {
+      player.socketId = socket.id;
+      socket.join(code);
+      socket.roomCode = code;
+      socket.playerIdx = playerIdx;
+      if (room.game) {
+        room.game.players[playerIdx].socketId = socket.id;
+      }
+      console.log(`${name} rejoined room ${code}`);
+      // Send current game state
+      if (room.game) {
+        broadcastGameState(code);
+      } else {
+        const playerNames = room.players.map(p => p.name);
+        socket.emit("roomCreated", { code, playerIdx, players: playerNames });
+      }
+    }
+  });
+
   // ── Disconnect ──
   socket.on("disconnect", () => {
     const room = rooms[socket.roomCode];
