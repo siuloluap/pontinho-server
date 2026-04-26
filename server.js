@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3001;
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 const RANK_VALUES = { A:15, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8, 9:9, 10:10, J:10, Q:10, K:10 };
-const DISCARD_CLAIM_SECONDS = 8;
+const DISCARD_CLAIM_SECONDS = 12;
 
 function buildDoubleDeck() {
   const deck = []; let id = 0;
@@ -135,6 +135,59 @@ function isValidMeld(cards, isBaterRound) {
   return false;
 }
 
+function normalizeWildsInMeld(cards) {
+  // For each non-joker wild, check if it can act as its real card value
+  return cards.map(c => {
+    if (!c.isWild || c.isJoker) return c;
+    // Try using it as its real value
+    const asNormal = { ...c, isWild: false };
+    const testCards = cards.map(x => x.id === c.id ? asNormal : x);
+    if (isValidMeld(testCards, true)) {
+      return { ...c, actingAsNormal: true };
+    }
+    return c;
+  });
+}
+
+function tryDisplaceWild(meldCards, newCard) {
+  // Check if newCard can replace a wild in the meld
+  // Returns { newMeldCards, displacedWild } or null
+  for (let i = 0; i < meldCards.length; i++) {
+    const c = meldCards[i];
+    if (!c.isWild) continue;
+    // Try replacing this wild with newCard
+    const testMeld = meldCards.map((x, j) => j === i ? newCard : x);
+    if (isValidMeld(testMeld, false)) {
+      // Valid! displaced wild goes back to hand
+      const newMeld = testMeld;
+      return { newMeldCards: newMeld, displacedWild: c };
+    }
+  }
+  return null;
+}
+
+
+function sortMeldCards(cards, type) {
+  if (type !== "run") return cards;
+  const nonWild = cards.filter(c => !c.isWild).sort((a, b) => getRankIndex(a.rank) - getRankIndex(b.rank));
+  const wilds = cards.filter(c => c.isWild);
+  if (nonWild.length === 0) return cards;
+  const idxMap = runIndices(nonWild);
+  const pairs = nonWild.map((c, i) => ({ card: c, idx: idxMap[i] })).sort((a, b) => a.idx - b.idx);
+  const minIdx = pairs[0].idx;
+  const maxIdx = pairs[pairs.length - 1].idx;
+  const sorted = [];
+  let wi = 0;
+  for (let i = minIdx; i <= maxIdx; i++) {
+    const p = pairs.find(p => p.idx === i);
+    if (p) sorted.push(p.card);
+    else if (wi < wilds.length) sorted.push(wilds[wi++]);
+  }
+  while (wi < wilds.length) sorted.push(wilds[wi++]);
+  return sorted;
+}
+
+
 function initRound(playerNames, dealerIdx, scores, wins, round) {
   let deck = shuffle(buildDoubleDeck());
   const cutIdx = Math.floor(deck.length * 0.6) + Math.floor(Math.random() * Math.floor(deck.length * 0.2));
@@ -164,6 +217,8 @@ function initRound(playerNames, dealerIdx, scores, wins, round) {
     currentPlayer: firstPlayer,
     turnPhase: "draw",
     meldsThisTurn: 0,
+    claimedDiscardCardId: null,
+    pendingNextPlayer: null,
     scores: scores || playerNames.map(() => 0),
     wins: wins || playerNames.map(() => 0),
     round: round || 1,
@@ -267,30 +322,42 @@ function resolveDiscardClaim(roomCode) {
   }
   room.game.discardClaim = null;
 
+  const nextPlayer = (discardingPlayerIdx + 1) % n;
+
   if (winner !== undefined) {
-    // Give card to winner, they must now play a meld with it
+    // Remove card from discard pile (winner takes it)
+    g.discard = g.discard.filter(c => c.id !== card.id);
     g.players[winner].hand.push(card);
-    // Remove from discard (it was already removed when we saved it)
-    g.currentPlayer = winner;
-    g.turnPhase = "play";
+    g.claimedDiscardCardId = card.id; // Must use this card in first meld
     g.meldsThisTurn = 0;
 
-    const winnerName = g.players[winner].name;
-    io.to(roomCode).emit("discardClaimResolved", {
-      winner, winnerName, card,
-      message: `${winnerName} pescou a carta descartada! Deve baixar um jogo usando-a.`,
-    });
+    if (winner === nextPlayer) {
+      // Next player claimed: normal turn for them (no melo obligation before others)
+      g.currentPlayer = winner;
+      g.turnPhase = "play";
+      g.pendingNextPlayer = null;
+      io.to(roomCode).emit("discardClaimResolved", {
+        winner, winnerName: g.players[winner].name, card,
+        message: `${g.players[winner].name} pescou a carta descartada! Baixe jogos ou descarte.`,
+      });
+    } else {
+      // Other player claimed: they must play a meld FIRST, then next player draws
+      g.currentPlayer = winner;
+      g.turnPhase = "play";
+      g.pendingNextPlayer = nextPlayer; // After winner plays, turn goes here
+      io.to(roomCode).emit("discardClaimResolved", {
+        winner, winnerName: g.players[winner].name, card,
+        message: `${g.players[winner].name} pescou a carta descartada! Deve baixar um jogo antes de ${g.players[nextPlayer].name} jogar.`,
+      });
+    }
   } else {
-    // No claims — next player's turn
-    const next = (discardingPlayerIdx + 1) % n;
-    g.currentPlayer = next;
+    // No claims — card stays on discard, next player's turn
+    g.currentPlayer = nextPlayer;
     g.turnPhase = "draw";
     io.to(roomCode).emit("discardClaimResolved", {
       winner: null, card,
-      message: `${g.players[next].name}, é sua vez! Compre uma carta.`,
+      message: `${g.players[nextPlayer].name}, é sua vez! Compre uma carta.`,
     });
-    // Put card back on discard
-    g.discard.push(card);
   }
 
   broadcastGameState(roomCode);
@@ -403,7 +470,6 @@ io.on("connection", (socket) => {
     const won = g.players[socket.playerIdx].hand.length === 0;
 
     if (won) {
-      // Player wins the round
       g.wins[socket.playerIdx]++;
       g.phase = "roundEnd";
       g.message = g.players[socket.playerIdx].name + " BATEU! 🎉";
@@ -411,7 +477,10 @@ io.on("connection", (socket) => {
       g.discard.push(card);
       broadcastGameState(socket.roomCode);
     } else {
-      // Start discard claim window
+      // Put card on discard immediately so all players see it
+      g.discard.push(card);
+      broadcastGameState(socket.roomCode);
+      // Then start claim window
       startDiscardClaim(socket.roomCode, card, socket.playerIdx);
     }
   });
@@ -439,7 +508,7 @@ io.on("connection", (socket) => {
     }
 
     player.hand = player.hand.filter(c => !cardIds.includes(c.id));
-    player.melds.push({ cards: selCards, type, owner: socket.playerIdx, order: Date.now() });
+    player.melds.push({ cards: sortMeldCards(selCards, type), type, owner: socket.playerIdx, order: Date.now() });
     g.meldsThisTurn++;
     g.lastAction = { type: "newMeld", player: player.name, cardIds: new Set(cardIds), meldOrder: player.melds[player.melds.length-1].order, ts: Date.now() };
 
@@ -476,7 +545,7 @@ io.on("connection", (socket) => {
     if (!type) { socket.emit("error", "Jogo inválido!"); return; }
 
     player.hand = player.hand.filter(c => !cardIds.includes(c.id));
-    g.players[targetPlayerIdx].melds[targetMeldIdx].cards = combined;
+    g.players[targetPlayerIdx].melds[targetMeldIdx].cards = sortMeldCards(combined, type);
     g.lastAction = { type: "addToMeld", player: player.name, cardIds: new Set(cardIds), meldOrder: targetMeld.order, ts: Date.now() };
 
     const won = player.hand.length === 0;
