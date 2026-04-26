@@ -154,13 +154,19 @@ function tryDisplaceWild(meldCards, newCard) {
   // Returns { newMeldCards, displacedWild } or null
   for (let i = 0; i < meldCards.length; i++) {
     const c = meldCards[i];
-    if (!c.isWild) continue;
+    // Consider both isWild cards and actingAsNormal wilds
+    if (!c.isWild && !c.actingAsNormal) continue;
     // Try replacing this wild with newCard
-    const testMeld = meldCards.map((x, j) => j === i ? newCard : x);
+    const testMeld = meldCards.map((x, j) => {
+      if (j === i) return newCard;
+      // Restore actingAsNormal cards to their wild state for testing
+      if (x.actingAsNormal) return { ...x, isWild: true, actingAsNormal: false };
+      return x;
+    });
     if (isValidMeld(testMeld, false)) {
-      // Valid! displaced wild goes back to hand
-      const newMeld = testMeld;
-      return { newMeldCards: newMeld, displacedWild: c };
+      // Valid! displaced wild goes back to hand (restore to wild state)
+      const displaced = { ...c, isWild: true, actingAsNormal: false };
+      return { newMeldCards: meldCards.map((x, j) => j === i ? newCard : x), displacedWild: displaced };
     }
   }
   return null;
@@ -276,10 +282,12 @@ function startDiscardClaim(roomCode, discardedCard, discardingPlayerIdx) {
     clearTimeout(room.game.discardClaim.timerHandle);
   }
 
+  const discardingPlayerName = room.game.players[discardingPlayerIdx].name;
   room.game.discardClaim = {
     card: discardedCard,
     claimDeadline: deadline,
     discardingPlayerIdx,
+    discardingPlayerName,
     claims: [],
     timerHandle: null,
   };
@@ -289,6 +297,7 @@ function startDiscardClaim(roomCode, discardedCard, discardingPlayerIdx) {
     card: discardedCard,
     deadline,
     discardingPlayerIdx,
+    discardingPlayerName,
   });
 
   // Timer: resolve after 8 seconds
