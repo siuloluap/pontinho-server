@@ -517,10 +517,9 @@ io.on("connection", (socket) => {
     }
 
     player.hand = player.hand.filter(c => !cardIds.includes(c.id));
-    const meldDesc = type === "run" ? selCards.map(c=>c.rank+(c.isJoker?"★":c.suit)).join(",") : selCards.map(c=>c.rank+(c.isJoker?"★":c.suit)).join(",");
+    const meldDesc = selCards.map(c=>c.rank+(c.isJoker?"★":c.suit)).join(",");
     player.melds.push({ cards: sortMeldCards(selCards, type), type, owner: socket.playerIdx, order: Date.now() });
     g.meldsThisTurn++;
-    if (!won) g.message = player.name + " baixou: " + meldDesc;
     g.lastAction = { type: "newMeld", player: player.name, cardIds: new Set(cardIds), meldOrder: player.melds[player.melds.length-1].order, ts: Date.now() };
 
     const won = player.hand.length === 0;
@@ -528,6 +527,10 @@ io.on("connection", (socket) => {
       g.wins[socket.playerIdx]++;
       g.phase = "roundEnd";
       g.message = player.name + " BATEU! 🎉";
+      g.roundPoints = g.players.map((p,i) => i===socket.playerIdx ? 0 : p.hand.reduce((s,c) => s+cardPoints(c), 0));
+      setTimeout(() => broadcastGameState(socket.roomCode), 300);
+    } else {
+      g.message = player.name + " baixou: " + meldDesc;
     }
 
     broadcastGameState(socket.roomCode);
