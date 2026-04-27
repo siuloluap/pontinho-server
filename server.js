@@ -412,8 +412,9 @@ io.on("connection", (socket) => {
 
   // ── Start game ──
   socket.on("startGame", () => {
+    console.log(`startGame from ${socket.id}, roomCode=${socket.roomCode}, playerIdx=${socket.playerIdx}`);
     const room = rooms[socket.roomCode];
-    if (!room) return;
+    if (!room) { console.log(`startGame: room not found for ${socket.roomCode}`); socket.emit("error", "Sala não encontrada. Reconecte."); return; }
     if (socket.playerIdx !== 0) { socket.emit("error", "Apenas o criador pode iniciar."); return; }
     if (room.players.length < 2) { socket.emit("error", "Precisa de pelo menos 2 jogadores."); return; }
 
@@ -425,8 +426,11 @@ io.on("connection", (socket) => {
       room.game.players[p.playerIdx].socketId = p.socketId;
     });
 
+    console.log(`Game started in room ${socket.roomCode} with ${room.players.length} players`);
     io.to(socket.roomCode).emit("gameStarted");
     broadcastGameState(socket.roomCode);
+    // Also send directly to creator socket in case room subscription was lost
+    setTimeout(() => broadcastGameState(socket.roomCode), 500);
   });
 
   // ── Draw from stock ──
