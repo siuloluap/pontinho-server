@@ -252,7 +252,7 @@ function broadcastGameState(roomCode) {
       ...g,
       players: g.players.map((p, i) => ({
         ...p,
-        hand: i === playerIdx ? p.hand : p.hand.map(() => ({ id: -1, faceDown: true })),
+        hand: (i === playerIdx || g.phase === "roundEnd") ? p.hand : p.hand.map(() => ({ id: -1, faceDown: true })),
         socketId: undefined,
       })),
       myPlayerIdx: playerIdx,
@@ -517,8 +517,10 @@ io.on("connection", (socket) => {
     }
 
     player.hand = player.hand.filter(c => !cardIds.includes(c.id));
+    const meldDesc = type === "run" ? selCards.map(c=>c.rank+(c.isJoker?"★":c.suit)).join(",") : selCards.map(c=>c.rank+(c.isJoker?"★":c.suit)).join(",");
     player.melds.push({ cards: sortMeldCards(selCards, type), type, owner: socket.playerIdx, order: Date.now() });
     g.meldsThisTurn++;
+    if (!won) g.message = player.name + " baixou: " + meldDesc;
     g.lastAction = { type: "newMeld", player: player.name, cardIds: new Set(cardIds), meldOrder: player.melds[player.melds.length-1].order, ts: Date.now() };
 
     const won = player.hand.length === 0;
