@@ -273,36 +273,28 @@ function broadcastChat(roomCode, messages) {
 // ─── Discard Claim Timer ──────────────────────────────────────────────────────
 function startDiscardClaim(roomCode, discardedCard, discardingPlayerIdx) {
   const room = rooms[roomCode];
-  if (!room) return;
+  if (!room?.game) return;
+  const g = room.game;
+  const n = g.players.length;
+  const discardingPlayerName = g.players[discardingPlayerIdx].name;
 
-  const deadline = Date.now() + DISCARD_CLAIM_SECONDS * 1000;
-
-  // Clear any existing timer
-  if (room.game.discardClaim?.timerHandle) {
-    clearTimeout(room.game.discardClaim.timerHandle);
-  }
-
-  const discardingPlayerName = room.game.players[discardingPlayerIdx].name;
+  // Voting system — no timer, wait for all players to vote
   room.game.discardClaim = {
     card: discardedCard,
-    claimDeadline: deadline,
     discardingPlayerIdx,
     discardingPlayerName,
+    votes: {}, // playerIdx -> "yes" | "no"
     claims: [],
     timerHandle: null,
   };
 
-  // Broadcast claim window open
   io.to(roomCode).emit("discardClaimOpen", {
     card: discardedCard,
-    deadline,
     discardingPlayerIdx,
     discardingPlayerName,
+    votes: {},
+    totalVoters: n - 1,
   });
-
-  // Timer: resolve after 8 seconds
-  const handle = setTimeout(() => resolveDiscardClaim(roomCode), DISCARD_CLAIM_SECONDS * 1000);
-  room.game.discardClaim.timerHandle = handle;
 
   broadcastGameState(roomCode);
 }
@@ -311,7 +303,7 @@ function resolveDiscardClaim(roomCode) {
   const room = rooms[roomCode];
   if (!room || !room.game.discardClaim) return;
 
-  const { card, discardingPlayerIdx, claims } = room.game.discardClaim;
+  const { card, discardingPlayerIdx, votes } = room.game.discardClaim;
   const g = room.game;
   const n = g.players.length;
 
@@ -321,14 +313,9 @@ function resolveDiscardClaim(roomCode) {
     priorityOrder.push((discardingPlayerIdx + i) % n);
   }
 
-  // Find winner: first in priority order who claimed
-  const claimSet = new Set(claims.map(c => c.playerIdx));
-  const winner = priorityOrder.find(idx => claimSet.has(idx));
+  // Find winner: first in priority order who voted "yes"
+  const winner = priorityOrder.find(idx => votes && votes[idx] === "yes");
 
-  // Clear timer
-  if (room.game.discardClaim.timerHandle) {
-    clearTimeout(room.game.discardClaim.timerHandle);
-  }
   room.game.discardClaim = null;
 
   const nextPlayer = (discardingPlayerIdx + 1) % n;
