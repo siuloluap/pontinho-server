@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3001;
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 const RANK_VALUES = { A:15, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8, 9:9, 10:10, J:10, Q:10, K:10 };
-const DISCARD_CLAIM_SECONDS = 12;
+const DISCARD_CLAIM_SECONDS = 300; // No timer - wait for all votes
 
 function buildDoubleDeck() {
   const deck = []; let id = 0;
